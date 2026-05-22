@@ -1,0 +1,39 @@
+# GAIA 평가용 LangGraph 에이전트 (Gemma 3n E4B + HF ZeroGPU/RunPod)
+
+# --- Gradio + HF Space ---
+gradio[oauth]>=4.44
+spaces>=0.30                          # ZeroGPU 데코레이터. RunPod 등에서는 import만 되고 미사용.
+
+# --- LangGraph 코어 ---
+langgraph>=0.2.50
+langchain-core>=0.3.20
+
+# --- 모델 로딩 (Gemma 3n E4B) ---
+# Gemma 3n은 transformers main 또는 4.46+ 의 Gemma3nForConditionalGeneration 클래스 필요.
+transformers>=4.50
+accelerate>=0.34
+torch>=2.3
+pillow                                # 이미지 입력
+librosa                               # 오디오 입력 (Gemma 3n 멀티모달)
+soundfile
+
+# --- HTTP / 파싱 ---
+requests
+pandas
+openpyxl
+beautifulsoup4
+markdownify
+pypdf>=4.0
+
+# --- 검색 백엔드 ---
+ddgs
+duckduckgo-search
+
+# --- YouTube ---
+youtube-transcript-api>=0.6
+
+# --- 캐시 (huggingface_hub는 그대로 둠: 모델 다운로드용) ---
+huggingface_hub>=0.28
+
+# --- 로컬 패키지 (src/gaia_agent) 를 editable install ---
+-e .

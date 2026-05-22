@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.cache/
+.venv/
+.env
+
+# 로컬 데이터셋 (Space repo 에 안 올림 — 평가 서버가 자체 question/file 제공)
+2023/
+.gitattributes

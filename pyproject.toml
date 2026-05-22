@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gaia-agent-lee"
+version = "0.1.0"
+description = "GAIA Level 1 agent (LangGraph + Gemma 3n E4B) for HF ZeroGPU / RunPod"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["gaia_agent*"]
