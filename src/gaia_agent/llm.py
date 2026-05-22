@@ -57,7 +57,7 @@ def _load_model(model_id: str):
             return _MODEL_CACHE[model_id], _PROCESSOR_CACHE[model_id]
         
         import torch
-        from transformers import AutoProcessor, AutoModelForVision2Seq
+        from transformers import AutoProcessor, AutoModelForConditionalGeneration
         
         print(f"Loading multimodal processor and model {model_id}...")
         dtype = torch.bfloat16 if torch.cuda.is_available() else torch.float32
@@ -65,7 +65,7 @@ def _load_model(model_id: str):
         processor = AutoProcessor.from_pretrained(model_id)
         
         # device_map="auto" allows transparent mapping to GPU during the @spaces.GPU hook.
-        model = AutoModelForVision2Seq.from_pretrained(
+        model = AutoModelForConditionalGeneration.from_pretrained(
             model_id,
             torch_dtype=dtype,
             device_map="auto",
