@@ -10,7 +10,7 @@ langchain-core>=0.3.20
 
 # --- 모델 로딩 (Gemma 3n E4B) ---
 # Gemma 3n은 transformers main 또는 4.46+ 의 Gemma3nForConditionalGeneration 클래스 필요.
-transformers>=4.50
+transformers>=4.50.0
 accelerate>=0.34
 torch>=2.3
 pillow                                # 이미지 입력
