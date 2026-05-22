@@ -171,14 +171,14 @@ def run_and_submit_all(profile: "gr.OAuthProfile | None"):
 
 
 with gr.Blocks() as demo:
-    gr.Markdown("# GAIA Agent — LangGraph + Gemma 3n E4B")
+    gr.Markdown("# GAIA Agent")
     gr.Markdown(
         """
         1. Log in to your Hugging Face account using the button below.
         2. Click 'Run Evaluation & Submit All Answers' to fetch GAIA questions,
            run the agent, submit the answers, and see the score.
 
-        Model: `google/gemma-3n-E4B-it` (override with `GAIA_MODEL_ID` env var).
+        Model: `google/gemma-4-E4B-it` (override with `GAIA_MODEL_ID` env var).
         Runtime: HF ZeroGPU (`@spaces.GPU` auto-detected) or any CUDA GPU (e.g., RunPod).
         """
     )
