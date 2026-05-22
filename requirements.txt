@@ -36,4 +36,3 @@ youtube-transcript-api>=0.6
 huggingface_hub>=0.28
 
 # --- 로컬 패키지 (src/gaia_agent) 를 editable install ---
--e .
