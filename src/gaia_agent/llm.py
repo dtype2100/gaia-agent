@@ -190,7 +190,7 @@ class GemmaChat:
     def __init__(
         self,
         model_id: str = "google/gemma-4-E4B-it",
-        max_new_tokens: int = 512,
+        max_new_tokens: int = 1024,
         temperature: float = 0.0,
     ) -> None:
         self.model_id = os.getenv("GAIA_MODEL_ID", model_id)

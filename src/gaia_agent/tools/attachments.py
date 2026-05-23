@@ -390,11 +390,12 @@ def get_attached_file() -> str:
 
         # 5. 일반 텍스트 계열 파일 (CSV, JSON, Python, PDB 등)
         try:
-            text = r.content.decode("utf-8")
+            with open(abs_filepath, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read()
             if len(text) > 12000:
                 text = text[:12000] + "\n...[truncated]"
             return header_info + f"### File Content:\n```\n{text}\n```"
-        except UnicodeDecodeError:
+        except Exception:
             pass
 
         return header_info + f"Binary file (cannot display as plain text directly). " \

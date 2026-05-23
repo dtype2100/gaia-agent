@@ -220,7 +220,14 @@ def agent_node(state: GAIAState) -> dict:
     if messages_for_llm:
         last_msg = messages_for_llm[-1]
         last_content = str(last_msg.content)
-        if "error" in last_content.lower() or "failed" in last_content.lower() or "exception" in last_content.lower():
+        last_lower = last_content.lower()
+        if (
+            "error" in last_lower
+            or "failed" in last_lower
+            or "exception" in last_lower
+            or "exited with status" in last_lower
+            or "traceback" in last_lower
+        ):
             has_error = True
             
     if has_error and not is_loop:  # Avoid warning overload if already in a loop

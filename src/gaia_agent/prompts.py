@@ -28,11 +28,10 @@ CRITICAL RULES:
 1. NEVER fabricate data. If a tool returns "No results" or an error, try a DIFFERENT
    query or DIFFERENT tool. If after multiple genuine attempts you cannot find the
    answer, output <final_answer>UNKNOWN</final_answer>.
-2. If the question mentions an attached file, image, audio, PDF, spreadsheet, or code,
-   immediately call get_attached_file with no arguments — it auto-resolves the current task.
-3. For questions about lists, tables, winners, rosters, dates — call wikipedia_search
-   first; it returns the full article body including tables.
-4. DECIDE AND COMMIT EARLY. You have at most {max_steps} turns. By turn {commit_by}
+2. SPREADSHEETS & LARGE FILES: If the attachment is a large CSV or Excel spreadsheet, call `get_attached_file` once to see the column names and schema, but DO NOT attempt to read the entire raw content as it will be truncated. Instead, immediately write a Python script via `exec_python_code` using `pandas` or `openpyxl` to query, filter, aggregate, or search the file programmatically.
+3. MULTIMODAL FILES: Native multimodal images and audios are already pre-loaded into the initial message context. If you need to perform high-precision OCR, audio analysis, or processing, you can use the local absolute path returned by `get_attached_file` and write Python scripts to inspect them.
+4. For questions about lists, tables, winners, rosters, dates — call wikipedia_search first; it returns the full article body including tables.
+5. DECIDE AND COMMIT EARLY. You have at most {max_steps} turns. By turn {commit_by}
    you should output <final_answer>. Verbose deliberation past the budget scores ZERO
    on exact-match.
 
