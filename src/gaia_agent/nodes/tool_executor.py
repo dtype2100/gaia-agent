@@ -1,9 +1,21 @@
-"""tool_executor 노드 + agent 이후 라우팅 함수.
+"""Code execution node + agent post-routing.
 
-agent 노드가 만든 마지막 AIMessage 의 tool_calls 를 모두 실행해 ToolMessage 로
-누적한다. route_after_agent 는 agent → (tools | format) 분기 결정.
+CodeAct 방식: agent 노드가 <code>...python...</code> 블록을 내면 여기서 in-process
+exec 한다. 도구는 plain Python function 으로 namespace 에 주입되어 있어
+`web_search(query="...")` 처럼 호출 가능. 변수는 state.metadata['py_scope'] 에 살아
+다음 turn 까지 보존됨.
+
+설계 메모:
+- in-process exec 라서 격리는 없음 (HF Space 컨테이너 안에서 동작). 별도 subprocess
+  격리가 필요해지면 후속 step 에서 AST whitelist sandbox 도입.
+- stdout/stderr 만 캡쳐해서 ToolMessage(content=...) 로 메시지 로그에 누적.
+- 결과가 비면 "[no output]" 힌트를 줘서 모델이 print() 를 빼먹는 패턴 교정.
 """
 from __future__ import annotations
+
+import contextlib
+import io
+import traceback
 
 from langchain_core.messages import AIMessage, ToolMessage
 
@@ -11,56 +23,84 @@ from ..state import GAIAState
 from ..tools import ALL_TOOLS
 
 
-_TOOL_MAP = {t.name: t for t in ALL_TOOLS}
 # tool 결과는 보통 길어서 truncate 안 하면 다음 LLM 컨텍스트가 폭주.
-_MAX_TOOL_RESULT_CHARS = 14000
+_MAX_OUTPUT_CHARS = 14000
 
 
-def tool_executor_node(state: GAIAState) -> dict:
+def _build_tool_namespace() -> dict:
+    """Return a dict mapping tool name → plain Python function wrapping the LangChain tool.
+
+    `exec_python_code` 는 의도적으로 제외 (이미 <code> 블록 자체가 Python 실행).
+    """
+    ns: dict = {}
+    for t in ALL_TOOLS:
+        if t.name == "exec_python_code":
+            continue
+
+        def _make(tool):
+            def _call(**kwargs):
+                return tool.invoke(kwargs)
+
+            _call.__name__ = tool.name
+            _call.__doc__ = tool.description
+            return _call
+
+        ns[t.name] = _make(t)
+    return ns
+
+
+def exec_node(state: GAIAState) -> dict:
     messages = state.get("messages") or []
     if not messages:
         return {}
     last = messages[-1]
     if not isinstance(last, AIMessage):
         return {}
-    tool_calls = getattr(last, "tool_calls", None) or []
-    if not tool_calls:
+    code = None
+    if hasattr(last, "additional_kwargs") and last.additional_kwargs:
+        code = last.additional_kwargs.get("code")
+    if not code:
         return {}
 
-    new_msgs = []
-    for tc in tool_calls:
-        name = tc.get("name", "")
-        args = tc.get("args") or {}
-        tid = tc.get("id") or name
-        if name not in _TOOL_MAP:
-            content = (
-                f"Tool not found: {name!r}. "
-                f"Available: {sorted(_TOOL_MAP.keys())}"
-            )
-        else:
-            tool = _TOOL_MAP[name]
-            try:
-                # LangChain BaseTool.invoke 는 dict 또는 단일 인자를 받는다.
-                result = tool.invoke(args)
-                content = str(result)
-            except Exception as e:
-                content = f"Tool {name} error: {type(e).__name__}: {e}"
-        if len(content) > _MAX_TOOL_RESULT_CHARS:
-            content = content[:_MAX_TOOL_RESULT_CHARS] + "\n...[truncated]"
-        new_msgs.append(ToolMessage(content=content, name=name, tool_call_id=tid))
+    metadata = state.get("metadata") or {}
+    scope = metadata.get("py_scope")
+    if scope is None:
+        scope = _build_tool_namespace()
 
-    return {"messages": new_msgs}
+    buf = io.StringIO()
+    error_msg = None
+    try:
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            exec(code, scope)
+    except Exception as e:
+        tb = traceback.format_exc()
+        error_msg = f"{type(e).__name__}: {e}\n{tb}"
+
+    output = buf.getvalue()
+    if error_msg:
+        output = (output + f"\n[ERROR] {error_msg}").strip()
+    if not output.strip():
+        output = "[no output — remember to print() what you need to see]"
+    if len(output) > _MAX_OUTPUT_CHARS:
+        output = output[:_MAX_OUTPUT_CHARS] + "\n...[truncated]"
+
+    new_msg = ToolMessage(content=output, name="exec", tool_call_id="exec_call")
+    return {"messages": [new_msg], "metadata": {**metadata, "py_scope": scope}}
 
 
 def route_after_agent(state: GAIAState) -> str:
-    """agent → tools (tool 호출 있으면) 또는 format (final_answer / 예산 소진)."""
+    """agent → exec (if <code> emitted) | format (final_answer or formatting failure)."""
     if state.get("raw_answer") is not None:
         return "format"
     messages = state.get("messages") or []
     if messages and isinstance(messages[-1], AIMessage):
-        if getattr(messages[-1], "tool_calls", None):
-            return "tools"
-    # tool_call 도 final_answer 도 없으면 모델이 형식을 어긴 것 — 한 번 더 돌게 둘
-    # 수 있지만 무한루프 방지 위해 step_count 가드는 agent_node 가 책임. 여기선
-    # tool 호출이 없으면 format 으로 빠지게 두어 그래프가 멈춘다.
+        last = messages[-1]
+        if (
+            hasattr(last, "additional_kwargs")
+            and last.additional_kwargs
+            and last.additional_kwargs.get("code")
+        ):
+            return "exec"
+    # <code> 도 <final_answer> 도 없으면 모델이 형식을 어긴 것 — format 으로 빠져
+    # raw_answer=None → "UNKNOWN" 으로 종결.
     return "format"

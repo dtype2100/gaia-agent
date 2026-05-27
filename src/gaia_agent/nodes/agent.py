@@ -1,18 +1,18 @@
 """agent 노드. ReAct 루프의 LLM 호출 + 출력 파싱.
 
-설계:
-- Gemma 3n은 네이티브 function-calling 토큰이 없으므로 프롬프트 컨벤션을 강제하고
-  XML-스타일 마커를 regex로 파싱한다:
+설계 (CodeAct 방식, Step 1):
+- 액션 포맷은 Python 코드:
     <thought>...</thought>
-    <tool_call>{"name":"...","args":{...}}</tool_call>   # 호출하려면
-    <final_answer>...</final_answer>                     # 끝내려면
+    <code>...python...</code>           # 행동 = 짧은 파이썬 스니펫
+    <final_answer>...</final_answer>    # 끝내려면
+- 도구는 exec_node 의 namespace 에 함수로 주입되어 있다. agent 는 `web_search(query=...)`
+  같은 함수 호출을 코드 안에 쓰면 됨.
 - 첫 진입 시 system + user 메시지를 부트스트랩하고 state.messages 에 누적.
 - step_count 가 max_steps 도달하면 final_answer 미발화여도 raw_answer 를 강제 세팅
   하고 다음 conditional edge 에서 format 으로 빠진다.
 """
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -25,57 +25,48 @@ from ..tools import ALL_TOOLS
 
 
 _THOUGHT_RE = re.compile(r"<thought>\s*(.*?)\s*</thought>", re.DOTALL | re.IGNORECASE)
-_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL | re.IGNORECASE)
+_CODE_RE = re.compile(r"<code>\s*(.*?)\s*</code>", re.DOTALL | re.IGNORECASE)
 _FINAL_ANSWER_RE = re.compile(r"<final_answer>\s*(.*?)\s*</final_answer>", re.DOTALL | re.IGNORECASE)
 
 
 def _render_tool_catalog(tools) -> str:
-    """LangChain BaseTool 리스트 → 시스템 프롬프트용 텍스트 카탈로그."""
+    """LangChain BaseTool 리스트 → Python 함수 시그니처 카탈로그.
+
+    `exec_python_code` 는 <code> 블록 자체가 Python 이라 노출하지 않음.
+    """
     parts = []
     for t in tools:
-        args_desc = ""
+        if t.name == "exec_python_code":
+            continue
         try:
             schema = t.args_schema.model_json_schema() if t.args_schema else {}
             props = schema.get("properties", {})
-            if props:
-                args_desc = " args: " + json.dumps(
-                    {k: v.get("type", "string") for k, v in props.items()}
-                )
-            else:
-                args_desc = " args: {}"
+            sig_args = ", ".join(
+                f"{k}: {v.get('type', 'string')}" for k, v in props.items()
+            )
         except Exception:
-            args_desc = ""
-        # 첫 문장만 추출(LLM-facing description 은 짧게 유지).
+            sig_args = ""
         desc = (t.description or "").split("\n")[0].strip()
-        parts.append(f"- {t.name}: {desc}{args_desc}")
+        parts.append(f"- {t.name}({sig_args}) -> str: {desc}")
     return "\n".join(parts)
 
 
 def _parse_agent_output(text: str) -> dict:
-    """모델 출력에서 thought/tool_call/final_answer 추출."""
-    out: dict[str, Any] = {"thought": None, "tool_calls": [], "final_answer": None}
+    """모델 출력에서 thought / code / final_answer 추출."""
+    out: dict[str, Any] = {"thought": None, "code": None, "final_answer": None}
     m = _THOUGHT_RE.search(text)
     if m:
         out["thought"] = m.group(1).strip()
-    for i, m in enumerate(_TOOL_CALL_RE.finditer(text)):
-        raw = m.group(1)
-        try:
-            tc = json.loads(raw)
-        except json.JSONDecodeError:
-            # 작은 JSON 위반 회복 시도: 양옆에 백틱 등이 묻은 경우.
-            cleaned = raw.strip().strip("`").strip()
-            try:
-                tc = json.loads(cleaned)
-            except json.JSONDecodeError:
-                continue
-        if isinstance(tc, dict) and "name" in tc:
-            out["tool_calls"].append(
-                {
-                    "name": tc["name"],
-                    "args": tc.get("args") or tc.get("arguments") or {},
-                    "id": f"call_{i}",
-                }
-            )
+    m = _CODE_RE.search(text)
+    if m:
+        code = m.group(1).strip()
+        # 모델이 ```python ... ``` 마크다운 펜스를 추가로 두른 경우 정리.
+        if code.startswith("```"):
+            code = re.sub(r"^```[a-zA-Z]*\n?", "", code)
+            if "```" in code:
+                code = code.rsplit("```", 1)[0]
+            code = code.strip()
+        out["code"] = code
     m = _FINAL_ANSWER_RE.search(text)
     if m:
         out["final_answer"] = m.group(1).strip()
@@ -136,12 +127,13 @@ def _bootstrap_messages(state: GAIAState) -> list:
         if route_hint == "get_attached_file":
             user_text += (
                 "\n\n[System Directive] An attached file is detected. For your very first step, "
-                "you MUST call the `get_attached_file` tool to download and inspect the file."
+                "you MUST call `get_attached_file()` inside a <code> block to download and inspect "
+                "the file."
             )
         elif route_hint == "youtube_info":
             user_text += (
                 "\n\n[System Directive] A YouTube link/video is referenced. For your very first step, "
-                "you MUST call the `youtube_info` tool with the video URL to fetch the metadata/transcript."
+                "you MUST call `youtube_info(url=...)` inside a <code> block with the video URL."
             )
 
     # --- Task 4: Prefetch/Bootstrap Multimodal Media Natively ---
@@ -200,34 +192,32 @@ def agent_node(state: GAIAState) -> dict:
         messages_for_llm = list(existing)
         msgs_to_append = []
 
-    # --- Task 6: Anti-Loop & Dynamic Self-Correction ---
+    # --- Anti-Loop & Dynamic Self-Correction ---
+    # 동일한 <code> 블록이 연속 2회 나오면 루프로 판단.
     is_loop = False
-    loop_tool_name = ""
-    ai_tool_calls = []
-    
-    # Gather tool calls in reversed order to inspect loops
+    recent_codes: list[str] = []
     for msg in reversed(messages_for_llm):
-        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-            ai_tool_calls.append(msg.tool_calls)
-            if len(ai_tool_calls) >= 2:
-                break
-                
-    if len(ai_tool_calls) >= 2:
-        tc1 = ai_tool_calls[0][0] if ai_tool_calls[0] else None
-        tc2 = ai_tool_calls[1][0] if ai_tool_calls[1] else None
-        if tc1 and tc2 and tc1.get("name") == tc2.get("name") and tc1.get("args") == tc2.get("args"):
-            is_loop = True
-            loop_tool_name = tc1.get("name")
+        if isinstance(msg, AIMessage):
+            kw = getattr(msg, "additional_kwargs", None) or {}
+            code = kw.get("code")
+            if code:
+                recent_codes.append(code)
+                if len(recent_codes) >= 2:
+                    break
 
-    # Inject Anti-Loop warning if loop detected
+    if len(recent_codes) >= 2 and recent_codes[0] == recent_codes[1]:
+        is_loop = True
+
     if is_loop:
         warning_msg = HumanMessage(
-            content=f"WARNING: You are stuck in a loop calling `{loop_tool_name}` with the exact same arguments! "
-                    f"You MUST change your strategy immediately. If a Python script failed or gave the same result, "
-                    f"rewrite it to approach the problem differently. If web search failed, use different search terms. "
-                    f"DO NOT repeat the same tool call with the same arguments."
+            content=(
+                "WARNING: You are stuck in a loop — your last two <code> blocks were "
+                "identical! You MUST change your strategy immediately. Rewrite the snippet "
+                "with different queries, different tools, or a different approach. "
+                "DO NOT submit the same code again."
+            )
         )
-        print(f"[Anti-Loop] Stuck detected for tool `{loop_tool_name}`. Injecting warning to LLM.")
+        print("[Anti-Loop] Identical consecutive <code> blocks detected. Injecting warning to LLM.")
         messages_for_llm = list(messages_for_llm) + [warning_msg]
 
     # Inject Self-Correction warning if previous tool execution errored out
@@ -268,9 +258,9 @@ def agent_node(state: GAIAState) -> dict:
 
     parsed = _parse_agent_output(ai.content)
 
-    # AIMessage 에 tool_calls 를 부착해 tool_executor 가 인식하게 한다.
-    if parsed["tool_calls"]:
-        ai.tool_calls = parsed["tool_calls"]
+    # AIMessage.additional_kwargs 에 code 를 부착해 exec_node 가 인식하게 한다.
+    if parsed["code"]:
+        ai.additional_kwargs["code"] = parsed["code"]
     msgs_to_append.append(ai)
 
     update: dict = {"messages": msgs_to_append, "step_count": step}
