@@ -62,11 +62,17 @@ OUTPUT FORMAT:
   answerable by one Wikipedia/web/file lookup. Use [step1_answer] placeholders for
   dependencies.
 
+ROUTE HINTS (Important):
+- If the question involves an attached file (e.g., CSV, image, audio, zip, pdf), append this route hint on a new line at the very end of your response:
+  ROUTE: get_attached_file
+- If the question mentions a YouTube link or YouTube video, append this route hint on a new line at the very end of your response:
+  ROUTE: youtube_info
+
 GUIDELINES:
 - Prefer fewer steps. Don't pad with verification.
 - A question mentioning an attached file is usually multi-hop: step 1 = read the file.
 - A question asking for a list/count/sum is usually multi-hop.
-- DO NOT answer the question yourself. Output ONLY the plan or SINGLE-HOP.
+- DO NOT answer the question yourself. Output ONLY the plan/SINGLE-HOP and the optional ROUTE hint.
 
 EXAMPLES:
 
@@ -83,8 +89,9 @@ Q: The attached spreadsheet has 2023 sales by region. What was the South total?
 A:
 1. Read the attached spreadsheet.
 2. Sum the sales rows where region = "South".
+ROUTE: get_attached_file
 
-Now decompose the user's question. Output ONLY the plan or "SINGLE-HOP".
+Now decompose the user's question. Output ONLY the plan or "SINGLE-HOP", plus any ROUTE hint if applicable.
 """
 
 

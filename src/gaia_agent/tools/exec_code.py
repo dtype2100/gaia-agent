@@ -29,18 +29,19 @@ def exec_python_code(code: str) -> str:
                 cwd=tmpdir,
                 capture_output=True,
                 text=True,
-                timeout=8,
+                timeout=20,
             )
         out = (result.stdout or "") + (result.stderr or "")
         if result.returncode != 0:
             out = f"exec_python_code exited with status {result.returncode}\n{out}"
     except subprocess.TimeoutExpired as e:
         partial = ((e.stdout or "") + (e.stderr or ""))[:4000]
-        return f"exec_python_code error: TimeoutExpired after 8s\n--- partial output ---\n{partial}"
+        return f"exec_python_code error: TimeoutExpired after 20s\n--- partial output ---\n{partial}"
     except Exception as e:
+        import traceback
         return (
             f"exec_python_code error: {type(e).__name__}: {e}\n"
-            f"--- partial output ---\n"
+            f"--- traceback ---\n{traceback.format_exc()[-1000:]}\n"
         )
 
     if len(out) > 12000:

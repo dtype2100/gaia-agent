@@ -140,6 +140,41 @@ def _search_ddg(query: str) -> str:
     return "No results found."
 
 
+def _rewrite_and_expand_query(query: str) -> list[str]:
+    # Skip rewriting for very short queries to minimize latency
+    if len(query.strip().split()) <= 3:
+        return [query]
+        
+    try:
+        from ..llm import get_llm
+        from langchain_core.messages import SystemMessage, HumanMessage
+        
+        llm = get_llm()
+        system_prompt = (
+            "You are a search query optimizer. Rewrite the verbose question into 1 or 2 clean, "
+            "highly-targeted search engine queries. Extract core entities, names, years, or titles. "
+            "Output ONLY the optimized queries, one per line, without numbers, headers, or explanations."
+        )
+        out = llm.invoke_with(
+            [SystemMessage(content=system_prompt), HumanMessage(content=query)],
+            max_new_tokens=64,
+            temperature=0.0
+        )
+        lines = [line.strip().strip('"\'') for line in out.content.split("\n") if line.strip()]
+        # Filter out lines that look like explanations or instructions
+        valid_queries = []
+        for line in lines:
+            if not any(indicator in line.lower() for indicator in ["here are", "optimized query", "query:", "sure", "original", "search query"]):
+                valid_queries.append(line)
+        if valid_queries:
+            # Keep at most 2 queries
+            return valid_queries[:2]
+    except Exception as e:
+        print(f"Query optimization failed (using original): {e}")
+        
+    return [query]
+
+
 @tool
 def web_search(query: str) -> str:
     """Search the web and return a list of titles, URLs, and snippets.
@@ -148,20 +183,27 @@ def web_search(query: str) -> str:
     Args:
         query: The search query string.
     """
-    # 1. Try Tavily or Brave first if API keys are set
-    for backend in (_search_tavily, _search_brave):
-        out = backend(query)
-        if out:
-            return out
+    optimized_queries = _rewrite_and_expand_query(query)
+    print(f"[search] Original query: {query!r} -> Optimized: {optimized_queries!r}")
+    
+    results = []
+    for q in optimized_queries:
+        # 1. Try Tavily or Brave first if API keys are set
+        for backend in (_search_tavily, _search_brave):
+            out = backend(q)
+            if out:
+                return out
 
-    # 2. Try DuckDuckGo (highly reliable and rate-limit resistant for free tiers)
-    ddg_out = _search_ddg(query)
-    if ddg_out and "No results found." not in ddg_out and "web_search error" not in ddg_out:
-        return ddg_out
+        # 2. Try DuckDuckGo (highly reliable and rate-limit resistant for free tiers)
+        ddg_out = _search_ddg(q)
+        if ddg_out and "No results found." not in ddg_out and "web_search error" not in ddg_out:
+            return ddg_out
+        results.append(ddg_out)
 
     # 3. Fallback to SearXNG only if DuckDuckGo failed
-    searx_out = _search_searxng(query)
-    if searx_out:
-        return searx_out
+    for q in optimized_queries:
+        searx_out = _search_searxng(q)
+        if searx_out:
+            return searx_out
 
-    return ddg_out or "No results found."
+    return results[0] if results else "No results found."

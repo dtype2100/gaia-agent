@@ -21,9 +21,13 @@ soundfile
 requests
 pandas
 openpyxl
+xlsxwriter
 beautifulsoup4
 markdownify
 pypdf>=4.0
+pdfplumber
+sympy
+scipy
 
 # --- 검색 백엔드 ---
 ddgs

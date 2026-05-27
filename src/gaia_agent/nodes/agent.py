@@ -129,6 +129,21 @@ def _bootstrap_messages(state: GAIAState) -> list:
     else:
         user_text = question
 
+    # Append routing directive if a route hint is present in metadata
+    metadata = state.get("metadata") or {}
+    route_hint = metadata.get("route_hint")
+    if route_hint:
+        if route_hint == "get_attached_file":
+            user_text += (
+                "\n\n[System Directive] An attached file is detected. For your very first step, "
+                "you MUST call the `get_attached_file` tool to download and inspect the file."
+            )
+        elif route_hint == "youtube_info":
+            user_text += (
+                "\n\n[System Directive] A YouTube link/video is referenced. For your very first step, "
+                "you MUST call the `youtube_info` tool with the video URL to fetch the metadata/transcript."
+            )
+
     # --- Task 4: Prefetch/Bootstrap Multimodal Media Natively ---
     from ..tools.attachments import download_attachment
     task_id = state.get("task_id")

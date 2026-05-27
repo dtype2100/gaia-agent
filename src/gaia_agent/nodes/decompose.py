@@ -39,10 +39,26 @@ def decompose_node(state: GAIAState) -> dict:
             max_new_tokens=256,
             temperature=0.0,
         )
-        text = _normalize(out.content)
+        raw_content = out.content or ""
+        
+        # Parse route hint
+        route_match = re.search(r"(?i)ROUTE:\s*(\w+)", raw_content)
+        route_hint = route_match.group(1) if route_match else None
+        
+        text = _normalize(raw_content)
+        
+        metadata = state.get("metadata") or {}
+        if route_hint:
+            metadata = {**metadata, "route_hint": route_hint}
+            print(f"[decompose] Parsed route_hint metadata: {route_hint}")
+            
+        update = {"metadata": metadata}
         if re.match(r"^\s*SINGLE[\s\-]*HOP", text, re.IGNORECASE):
-            return {"plan": None}
-        return {"plan": text or None}
+            update["plan"] = None
+        else:
+            update["plan"] = text or None
+            
+        return update
     except Exception as e:
         print(f"decompose_node failed (proceeding without plan): {e}")
         return {"plan": None}
